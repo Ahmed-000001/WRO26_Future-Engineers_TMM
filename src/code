@@ -1,1 +1,106 @@
+#include "MatrixMiniR4.h"
 
+// --- SETPOINTS & CONFIGURATION ---
+const int TARGET_DISTANCE = 250;      // Target distance from right wall (mm)
+
+// --- VERY LIGHT SERVO LIMITS ---
+const int SERVO_CENTER = 95;          
+const int LIGHT_LEFT = 103;           // Subtle nudge left for standard tracking
+const int LIGHT_RIGHT = 87;           // Subtle nudge right for standard tracking
+
+void setup() {
+  MiniR4.begin();
+  Serial.begin(115200);
+  MiniR4.PWR.setBattCell(2);
+
+  MiniR4.I2C4.MXLaserV2.begin();   // Front sensor
+  MiniR4.I2C3.MXLaserV2.begin();   // Right sensor
+
+  MiniR4.M3.setBrake(true);
+  MiniR4.M4.setBrake(true);
+
+  MiniR4.RC3.setAngle(SERVO_CENTER); 
+  stopRobot();
+  delay(1000);
+}
+
+void loop() {
+  int frontDistance = MiniR4.I2C4.MXLaserV2.getDistance();
+  int rightDistance = MiniR4.I2C3.MXLaserV2.getDistance();
+
+  int m3RightPower = -60; // M3 is Right Motor
+  int m4LeftPower = -60;  // M4 is Left Motor
+
+  // =====================================================================
+  // 1. FRONT SENSOR ONLY: STOP, REVERSE, THEN SHARP LEFT
+  // =====================================================================
+  if (frontDistance < 300) {
+    Serial.println("!!! EMERGENCY FRONT WALL !!! Executing Sequence...");
+    
+    // STEP 1: STOP
+    stopRobot();
+    delay(200); // Quick pause to protect gears from sudden direction changes
+    
+    // STEP 2: REVERSE STRAIGHT BACK (Positive power drives wheels backward)
+    Serial.println(" -> Step 2: Reversing");
+    MiniR4.M3.setPower(50); 
+    MiniR4.M4.setPower(50);
+    delay(400); // Backs up for 0.4 seconds
+    
+    // STEP 3: SHARP LEFT TURN
+    Serial.println(" -> Step 3: Sharp Left Turn");
+    MiniR4.RC3.setAngle(LIGHT_LEFT); 
+    MiniR4.M3.setPower(-95);  // Right motor drives hard forward
+    MiniR4.M4.setPower(0);    // Left motor stops to pivot
+    delay(500);               // Swings for 0.5 seconds to clear the corner
+    
+    return; // Exits the loop here so the regular wall tracking doesn't run
+  }
+
+  // =====================================================================
+  // 2. STATE MACHINE: Standard 200mm Side Wall Tracking (No stopping/reversing here)
+  // =====================================================================
+  
+  // CONDITION A: Too close to right wall (Less than 150mm) -> Smooth Left Drift
+  if (rightDistance < 150) {
+    Serial.println("Action: Smooth Left Shift");
+    MiniR4.RC3.setAngle(LIGHT_LEFT); 
+    
+    m3RightPower = -80; // Right motor pushes forward
+    m4LeftPower = 0;    // Left motor stops to let the car drift left smoothly
+  }
+  
+  // CONDITION B: Too far from right wall (Greater than 250mm) -> Smooth Right Drift
+  else if (rightDistance > 250) {
+    Serial.println("Action: Smooth Right Shift");
+    MiniR4.RC3.setAngle(LIGHT_RIGHT); 
+    
+    m3RightPower = 0;    // Right motor stops
+    m4LeftPower = -80;   // Left motor drives forward to pull the car right smoothly
+  }
+  
+  // CONDITION C: On Track (Between 150mm and 250mm) -> Straight Continuous Drive
+  else {
+    Serial.println("Action: Safe Zone - Straight");
+    MiniR4.RC3.setAngle(SERVO_CENTER); 
+    m3RightPower = -60;  
+    m4LeftPower = -60;  
+  }
+
+  // Apply motor powers directly to the physical ports
+  MiniR4.M3.setPower(m3RightPower);
+  MiniR4.M4.setPower(m4LeftPower);
+
+  // Telemetry Monitor
+  Serial.print("Front: "); Serial.print(frontDistance);
+  Serial.print("mm | Right: "); Serial.print(rightDistance);
+  Serial.print("mm | M3(R): "); Serial.print(m3RightPower);
+  Serial.print(" | M4(L): "); Serial.println(m4LeftPower);
+  
+  delay(30); 
+}
+
+void stopRobot() {
+  MiniR4.M3.setPower(0);
+  MiniR4.M4.setPower(0);
+}
